@@ -1,0 +1,23 @@
+# See docs at: https://mystmd.org/guide/frontmatter
+version: 1
+project:
+  id: 3336c5ef-5600-4866-a780-c7375d0a43ab
+  title: 3D Point Cloud Completion
+  date: 2025-03-31
+  # description:
+  # keywords: []
+  authors: 
+    - name: David Heffren
+    - name: Daniel Wang
+    - name: Edward Wang
+  github: https://github.com/edlwang/ProbabilisticMLFinalProject
+  banner: ./images/proxy-image.jpg
+  subject: Final Project
+  venue:
+    title: 553.724 Probabilistic Machine Learning
+  # To autogenerate a Table of Contents, run "myst init --write-toc"
+site:
+  template: article-theme
+  # options:
+  #   favicon: favicon.ico
+  #   logo: site_logo.png
