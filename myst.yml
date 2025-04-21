@@ -2,7 +2,7 @@
 version: 1
 project:
   id: 3336c5ef-5600-4866-a780-c7375d0a43ab
-  title: 3D Point Cloud Completion
+  title: 3D Shape Completion
   date: 2025-03-31
   # description:
   # keywords: []
