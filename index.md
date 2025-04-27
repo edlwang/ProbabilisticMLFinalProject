@@ -291,7 +291,7 @@ We implemented a 3D Convolutional Neural Network (CNN) for binary classification
 
 The CNN was trained using the Adam optimizer with a learning rate $\eta = 1 \times 10^{-4}$ and minimized the Cross-Entropy loss. The dataset was partitioned into 80% training and 20% validation samples. Training proceeded for 50 epochs using a batch size $B=64$. The training and validation loss and accuracy curves are presented below.
 
-```{figure} images/CNN_Loss_Accuracy_Curves.png
+```{figure} images/cnn_loss_accuracy_curves.png
 :name: cnn_loss_accuracy_curves
 
 Training and validation loss ($L$) and accuracy (Acc) curves for the CNN classifier over 50 epochs.
