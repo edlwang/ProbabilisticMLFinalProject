@@ -246,6 +246,113 @@ We are trying to learn a function $f$ to distinguish between data points generat
 #### Architecture
 
 We implemented a 3D Convolutional Neural Network (CNN) for binary classification ('cube' vs 'sphere') of voxelized partial point clouds. The network accepts input voxel grids of size $32 \times 32 \times 32$ (denoted as $D=32$). The architecture comprises three convolutional blocks followed by a fully connected classifier. Each convolutional block consists of a 3D convolutional layer (`Conv3d`) with kernel size $k=3$, stride $s=1$, and padding $p=1$, followed by a ReLU activation (`ReLU`) and a 3D max pooling layer (`MaxPool3d`) with kernel size $k=2$ and stride $s=2$. The number of output channels $C_{out}$ increases through the blocks: Block 1 has $C_{out}=16$, Block 2 has $C_{out}=32$, and Block 3 has $C_{out}=64$. This sequence transforms the input tensor shape from $(B, 1, D, D, D)$ to $(B, 16, D/2, D/2, D/2)$, then to $(B, 32, D/4, D/4, D/4)$, and finally to $(B, 64, D/8, D/8, D/8)$, where $B$ is the batch size. For $D=32$, the final feature map size is $(B, 64, 4, 4, 4)$. This output is flattened into a vector $x_{flat} \in \mathbb{R}^{4096}$ (since $64 \times 4^3 = 4096$). The classifier then processes this vector through a linear layer mapping $4096 \to 512$ features, followed by ReLU activation, a dropout layer with probability $p_{dropout}=0.5$ for regularization, and a final linear layer mapping $512 \to 2$ output classes. The `nn.CrossEntropyLoss` used incorporates the final log-softmax operation.
+
+```{code} Python
+
+class VoxelCNN(nn.Module):
+    def __init__(self, input_dim=(32, 32, 32), num_classes=2):
+        super(VoxelCNN, self).__init__()
+        d = input_dim[0] # Assuming cubic voxels for simplicity
+
+        # Calculate the size after convolutions and pooling
+        # Input: (B, 1, d, d, d) = (B, 1, 32, 32, 32)
+        # Conv1 (k=3, s=1, p=1) -> (B, 16, 32, 32, 32)
+        # Pool1 (k=2, s=2) -> (B, 16, 16, 16, 16)
+        # Conv2 (k=3, s=1, p=1) -> (B, 32, 16, 16, 16)
+        # Pool2 (k=2, s=2) -> (B, 32, 8, 8, 8)
+        # Conv3 (k=3, s=1, p=1) -> (B, 64, 8, 8, 8)
+        # Pool3 (k=2, s=2) -> (B, 64, 4, 4, 4)
+        self.final_conv_size = 64 * (d // 8) * (d // 8) * (d // 8) # 64 * 4 * 4 * 4 = 4096 for d=32
+
+        self.encoder = nn.Sequential(
+            nn.Conv3d(1, 16, kernel_size=3, stride=1, padding=1), # Output: (B, 16, d, d, d)
+            nn.ReLU(),
+            nn.MaxPool3d(kernel_size=2, stride=2),              # Output: (B, 16, d/2, d/2, d/2)
+
+            nn.Conv3d(16, 32, kernel_size=3, stride=1, padding=1),# Output: (B, 32, d/2, d/2, d/2)
+            nn.ReLU(),
+            nn.MaxPool3d(kernel_size=2, stride=2),              # Output: (B, 32, d/4, d/4, d/4)
+
+            nn.Conv3d(32, 64, kernel_size=3, stride=1, padding=1),# Output: (B, 64, d/4, d/4, d/4)
+            nn.ReLU(),
+            nn.MaxPool3d(kernel_size=2, stride=2)               # Output: (B, 64, d/8, d/8, d/8)
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Linear(self.final_conv_size, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5), # Add dropout for regularization
+            nn.Linear(512, num_classes)
+        )
+
+    def forward(self, x):
+        # x shape: (batch_size, 1, d, d, d)
+        x = self.encoder(x)
+        # Flatten the output for the linear layer
+        x = x.view(x.size(0), -1) # Shape: (batch_size, final_conv_size)
+        x = self.classifier(x)   # Shape: (batch_size, num_classes)
+        return x
+```
+
+```{code} Python
+cnn_model = VoxelCNN(input_dim=(voxel_resolution, voxel_resolution, voxel_resolution), num_classes=num_classes_cnn).to(device)
+cnn_optimizer = optim.Adam(cnn_model.parameters(), lr=1e-4) # Might need a smaller learning rate for CNNs
+cnn_criterion = nn.CrossEntropyLoss()
+```
+
+```{code} Python
+train_losses_cnn = []
+val_losses_cnn = []
+train_accs_cnn = []
+val_accs_cnn = []
+
+for epoch in range(cnn_epochs):
+    # --- Training Phase ---
+    cnn_model.train()
+    running_train_loss = 0.0
+    train_correct = 0
+    train_total = 0
+    for inputs, labels in cnn_train_loader:
+        inputs, labels = inputs.to(device), labels.to(device)
+
+        cnn_optimizer.zero_grad()
+        outputs = cnn_model(inputs)
+        loss = cnn_criterion(outputs, labels)
+        loss.backward()
+        cnn_optimizer.step()
+
+        running_train_loss += loss.item() * inputs.size(0)
+        _, predicted = torch.max(outputs.data, 1)
+        train_total += labels.size(0)
+        train_correct += (predicted == labels).sum().item()
+
+    epoch_train_loss = running_train_loss / len(cnn_train_loader.dataset)
+    epoch_train_acc = 100 * train_correct / train_total
+    train_losses_cnn.append(epoch_train_loss)
+    train_accs_cnn.append(epoch_train_acc)
+
+    # --- Validation Phase ---
+    cnn_model.eval()
+    running_val_loss = 0.0
+    val_correct = 0
+    val_total = 0
+    with torch.no_grad():
+        for inputs, labels in cnn_val_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = cnn_model(inputs)
+            loss = cnn_criterion(outputs, labels)
+
+            running_val_loss += loss.item() * inputs.size(0)
+            _, predicted = torch.max(outputs.data, 1)
+            val_total += labels.size(0)
+            val_correct += (predicted == labels).sum().item()
+
+    epoch_val_loss = running_val_loss / len(cnn_val_loader.dataset)
+    epoch_val_acc = 100 * val_correct / val_total
+    val_losses_cnn.append(epoch_val_loss)
+    val_accs_cnn.append(epoch_val_acc)
+```
+
 ### K-Nearest Neighbors
 
 Let $A$ and $B$ be two sets of points. Let $|A|$ denote the cardinality of the set and $A^{(i)}$ denote the $i$th point. We can define the probability measure $P_A$ associated with the point cloud $A$ as
