@@ -241,10 +241,11 @@ For this problem, we take the partial and noisy 3D forms and attempt to classify
 We are trying to learn a function $f$ to distinguish between data points generated initially from a sphere and those generated initially from a cube. 
 ```
 
-### Logistic Regression
+### Convolutional Neural Network
 
-For logistic regression, we take in as input a set of $N$ labeled training examples, where the training examples are the voxel representation of the partial 3D form in $\mathbb{R}^{d \times d \times d}$. We flatten the data into a vector $\mathbb{R}^{d^3}$ and take these to be our features for logistic regression. The features are then standardized (REPLACE/ADD WITH WHAT WE ACTUALLY DO FOR THE PREPROCESSING PIPELINE)
+#### Architecture
 
+We implemented a 3D Convolutional Neural Network (CNN) for binary classification ('cube' vs 'sphere') of voxelized partial point clouds. The network accepts input voxel grids of size $32 \times 32 \times 32$ (denoted as $D=32$). The architecture comprises three convolutional blocks followed by a fully connected classifier. Each convolutional block consists of a 3D convolutional layer (`Conv3d`) with kernel size $k=3$, stride $s=1$, and padding $p=1$, followed by a ReLU activation (`ReLU`) and a 3D max pooling layer (`MaxPool3d`) with kernel size $k=2$ and stride $s=2$. The number of output channels $C_{out}$ increases through the blocks: Block 1 has $C_{out}=16$, Block 2 has $C_{out}=32$, and Block 3 has $C_{out}=64$. This sequence transforms the input tensor shape from $(B, 1, D, D, D)$ to $(B, 16, D/2, D/2, D/2)$, then to $(B, 32, D/4, D/4, D/4)$, and finally to $(B, 64, D/8, D/8, D/8)$, where $B$ is the batch size. For $D=32$, the final feature map size is $(B, 64, 4, 4, 4)$. This output is flattened into a vector $x_{flat} \in \mathbb{R}^{4096}$ (since $64 \times 4^3 = 4096$). The classifier then processes this vector through a linear layer mapping $4096 \to 512$ features, followed by ReLU activation, a dropout layer with probability $p_{dropout}=0.5$ for regularization, and a final linear layer mapping $512 \to 2$ output classes. The `nn.CrossEntropyLoss` used incorporates the final log-softmax operation.
 ### K-Nearest Neighbors
 
 Let $A$ and $B$ be two sets of points. Let $|A|$ denote the cardinality of the set and $A^{(i)}$ denote the $i$th point. We can define the probability measure $P_A$ associated with the point cloud $A$ as
@@ -282,10 +283,6 @@ After learning the distribution of the 3D forms, we then modify our training dat
 ## Classification
 
 ### Convolutional Neural Network
-
-#### Architecture
-
-We implemented a 3D Convolutional Neural Network (CNN) for binary classification ('cube' vs 'sphere') of voxelized partial point clouds. The network accepts input voxel grids of size $32 \times 32 \times 32$ (denoted as $D=32$). The architecture comprises three convolutional blocks followed by a fully connected classifier. Each convolutional block consists of a 3D convolutional layer (`Conv3d`) with kernel size $k=3$, stride $s=1$, and padding $p=1$, followed by a ReLU activation (`ReLU`) and a 3D max pooling layer (`MaxPool3d`) with kernel size $k=2$ and stride $s=2$. The number of output channels $C_{out}$ increases through the blocks: Block 1 has $C_{out}=16$, Block 2 has $C_{out}=32$, and Block 3 has $C_{out}=64$. This sequence transforms the input tensor shape from $(B, 1, D, D, D)$ to $(B, 16, D/2, D/2, D/2)$, then to $(B, 32, D/4, D/4, D/4)$, and finally to $(B, 64, D/8, D/8, D/8)$, where $B$ is the batch size. For $D=32$, the final feature map size is $(B, 64, 4, 4, 4)$. This output is flattened into a vector $x_{flat} \in \mathbb{R}^{4096}$ (since $64 \times 4^3 = 4096$). The classifier then processes this vector through a linear layer mapping $4096 \to 512$ features, followed by ReLU activation, a dropout layer with probability $p_{dropout}=0.5$ for regularization, and a final linear layer mapping $512 \to 2$ output classes. The `nn.CrossEntropyLoss` used incorporates the final log-softmax operation.
 
 #### Training and Results
 
