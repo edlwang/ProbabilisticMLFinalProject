@@ -355,24 +355,51 @@ for epoch in range(cnn_epochs):
 
 ### K-Nearest Neighbors
 
-We evaluated the K-Nearest Neighbors (KNN) classifier ($k=5$) using various distance metrics between the input partial point clouds and the training samples. We tested three primary distance metrics: Chamfer distance, Masked Chamfer distance (with a threshold of 0.3), and Earth Mover's Distance (EMD). Additionally, we assessed the impact of applying Procrustes analysis to align the point clouds before computing the distance. The classification accuracies on the test set for each configuration are summarized below:
 
-| Distance Metric         | Procrustes Alignment | Test Accuracy |
-| :---------------------- | :------------------- | :------------ |
-| Chamfer                 | No                   | 0.45          |
-| Masked Chamfer ($t=0.3$) | No                   | 0.45          |
-| EMD                     | No                   | 0.53          |
-| EMD                     | Yes                  | 0.74          |
-| Chamfer                 | Yes                  | 0.82          |
-| Masked Chamfer ($t=0.3$) | Yes                  | **0.87**      |
+Some important things to consider for a distance on point clouds are that the distance is invariant to both permutation of the input points in the point clouds, and that it is invariant to translation and rotation of the point clouds. The second is less obvious than the first: but depending on the task, it may be advantageous use natural symmetries in the data to help with our understanding of "similar objects".
 
-**Analysis:**
+A common distance metric for point clouds which is commonly used is the Chamfer distance, which computes the distance between two point clouds (of the same size) by taking the average distance between pairs of nearest neighbors, ie 
+$$ 
+d(A,B) = \frac{1}{2n} \sum_{i=1}^n |x_i - NN(x_i, B)| + \frac{1}{2n}\sum_{j=1}^n\vert x_j - NN(x_j, A)
+$$
 
-The results clearly demonstrate the critical importance of rotational and translational alignment for classifying partial point clouds. Without alignment (Procrustes = No), all distance metrics performed poorly, with accuracies barely above random guessing (0.50 for a binary classification task). EMD showed slightly better performance than Chamfer and Masked Chamfer in this baseline case.
+This metric is permutation (but not rotation) invariant. However, a major limitation of this distance is that it only works for point clouds of the same "size" - which doesn't really match the real world. A way to get around this is to define a "masked chamfer" distance as follows: 
 
-Applying Procrustes analysis before calculating the distance significantly improved performance across all metrics. This highlights that the primary challenge in comparing these partial point clouds lies in their arbitrary orientations and positions. Aligning them first allows the distance metrics to capture shape similarity more effectively.
+$$ d(A,B) = \frac{1}{2n} \sum_{i=1}^n |x_i - NN(x_i, B)| + \frac{1}{2m}\sum_{j=1}^m \vert x_j - NN(x_j, A)\vert* m_i$$ 
 
-Among the aligned metrics, Masked Chamfer distance achieved the highest accuracy (87%), outperforming both standard Chamfer (82%) and EMD (74%). This suggests that ignoring points that are very far apart after alignment (the masking step) is beneficial for comparing partial observations, potentially filtering out noise or irrelevant parts of the point clouds. The standard Chamfer distance, which considers all points, still performs well, indicating its robustness after alignment. EMD, while significantly improved by alignment, lagged behind the Chamfer-based metrics in this experiment. The superior performance of the Procrustes-aligned Masked Chamfer KNN demonstrates its effectiveness for classifying these specific types of partial 3D shapes.
+where $m_i$ is a mask value of 0 or 1 for each term on the sum, and $m_i = | x_i - NN(x_i, A)| < v$. Ie, terms in the sum which are below some threshold of "distance" from the other point cloud are the only ones counted. This ignores points which are very far away from the other cloud. This is an approximate way to match compute distance between "partial" point clouds which may not line up perfectly. 
+
+Another common distance metric is Earth mover's or Wasserstein distance. Let $A$ and $B$ be two sets of points. Let $|A|$ denote the cardinality of the set and $A^{(i)}$ denote the $i$th point. One can define the probability measure $P_A$ associated with the point cloud $A$ as
+
+$$
+P_A(S) = \dfrac{1}{|A|} \sum_{i=1}^{|A|} \boldsymbol{1}_{A^{(i)} \in S}\\
+$$
+
+and $P_B$ for point cloud $B$ analagously. Define the distance between point clouds $A$ and $B$ as the Earth mover's distance between probability measures $P_A$ and $P_B$
+
+$$
+d(A,B) = \inf_{\pi \in \Gamma(P_A, P_B)} \mathbb{E}_{(x,y) \sim \pi} \|x-y\|
+$$
+
+To get rotation and translation equivariance, define the distance as: 
+$$ d(A,B) = \min_{g\in SE(3)} d(g\circ A, B)$$ 
+
+This distance can be computed with gradient descent - however, this has the drawback with KNNs where you have to continually compute distances.
+
+An alternative is Procrustes Analysis. 
+
+The following is to be optimized: 
+$$d(A,B) = \min_{g\in SE(3)} \sum_{i=1}^n d(g\circ A_i, B_i)$$ 
+
+where the proper "g" is the argmin.
+
+To derive this, the cross covariance of the two point cloud matrices and its SVD was computed, then take $R = VU^T$ and $t = \mu_B - R \mu_A$ 
+
+This comes from the known solution to the least squares problem. 
+
+Strictly speaking, the Procrustes objective function \( \min_{g\in SE(3)} \sum_{i=1}^n d(g\circ A_i, B_i) \) assumes a known, correct pairing between points \(A_i\) and \(B_i\). This condition is not met in our scenario involving comparisons between partial and complete point clouds. However, we utilize this alignment technique empirically. Given that our dataset consists of relatively compact point distributions, the alignment provided by Procrustes, while not based on true point correspondences, serves to orient the shapes effectively, resulting in substantial gains in KNN classification performance.
+
+Using this distance metric, we then apply K-Nearest Neighbor classification to the set of point clouds. We let each KNN have the distance metric of either Earthmover's, Chamfer, or Masked Chamfer, and then either apply Procrustes or not. Each KNN is trained with 1000 samples of both parallelepiped and spheres with $k=5$.
 
 ## 3D Shape Completion
 
