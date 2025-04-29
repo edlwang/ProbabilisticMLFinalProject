@@ -401,6 +401,177 @@ Strictly speaking, the Procrustes objective function $\min_{g\in SE(3)} \sum_{i=
 
 Using this distance metric, we then apply K-Nearest Neighbor classification to the set of point clouds. We let each KNN have the distance metric of either Earthmover's, Chamfer, or Masked Chamfer, and then either apply Procrustes or not. Each KNN is trained with 1000 samples of both parallelepiped and spheres with $k=5$.
 
+:::{dropdown} KNN Code
+
+# --- Original Point Cloud Prep ---
+X_points = np.array([pc.flatten() for pc in inputPoints])
+y_labels = np.array(y)
+n_points = inputPoints[0].shape[0] # Number of points per sample
+
+# --- Data Splitting (Points) ---
+X_train_pts, X_test_pts, y_train_pts, y_test_pts = train_test_split(
+    X_points, y_labels, test_size=0.3, random_state=42, stratify=y_labels
+)
+
+n_dims = inputPoints[0].shape[1]   # Number of dimensions per point (e.g., 3 for x,y,z)
+
+# --- Feature Scaling (Points) ---
+# scaler_pts = StandardScaler() 
+# X_train_pts_scaled = scaler_pts.fit_transform(X_train_pts) 
+# X_test_pts_scaled = scaler_pts.transform(X_test_pts) 
+
+
+def procrustes(PC1, PC2):
+    mu1 = np.mean(PC1, axis=0)
+    mu2 = np.mean(PC2, axis=0)
+    nPC1 = PC1 - mu1
+    nPC2 = PC2 - mu2
+    crossCov = nPC1.T @nPC2
+    u, s, vh= np.linalg.svd(crossCov, full_matrices = True)
+    # is the determinant negative? 
+    R = vh.T @ u.T
+    t = mu2 - R@(mu1)
+    PC1New = PC1@ R.T + t
+    return PC1New
+def maskedChamferProc(PC1, PC2, thresh = .3):
+    # Consider handling potential division by zero if mp can be 0
+    n = PC1.shape[0]
+    m = PC2.shape[0]
+    numIter = 10
+    if m == 0 or n == 0: # Handle empty point clouds
+        return np.inf # Or some large number / appropriate value
+    PC1 = procrustes(PC1, PC2)
+    nmm = PC1[:, np.newaxis, :] - PC2[np.newaxis, :, :]
+    dist =  np.sum(nmm*nmm, axis=-1)
+    PC1max = np.min(dist, axis=1)
+    PC2max = np.min(dist, axis=0)
+    
+    mask = (PC2max < thresh**2)
+    mp = np.sum(mask)
+    
+    if mp == 0:
+         # Handle case where no points in PC2 are close enough
+         # Option 1: Only use PC1 contribution (might be biased)
+         # return (1.0/n) * np.sum(PC1max) 
+         # Option 2: Return a large distance or infinity
+         return np.inf
+    
+    PC2maxAlt = PC2max * mask
+    # Using n_points and m (shape[0]) for normalization as per standard Chamfer
+    totalDist = 0.5 * (1.0 / n) * np.sum(PC1max) + 0.5 * (1.0 / m) * np.sum(PC2maxAlt[mask]) # Only sum masked points
+    # Or using mp for normalization as in your original code:
+    # totalDist = 0.5 * (1.0/n) * np.sum(PC1max) + 0.5 * (1.0/mp) * np.sum(PC2maxAlt) 
+    return totalDist
+# --- Your Masked Chamfer Function ---
+def maskedChamfer(PC1, PC2, thresh = .3):
+    # Consider handling potential division by zero if mp can be 0
+    n = PC1.shape[0]
+    m = PC2.shape[0]
+   
+    if m == 0 or n == 0: # Handle empty point clouds
+        return np.inf # Or some large number / appropriate value
+
+    nmm = PC1[:, np.newaxis, :] - PC2[np.newaxis, :, :]
+    dist =  np.sum(nmm*nmm, axis=-1)
+    PC1max = np.min(dist, axis=1)
+    PC2max = np.min(dist, axis=0)
+    
+    mask = (PC2max < thresh**2)
+    mp = np.sum(mask)
+    
+    if mp == 0:
+         # Handle case where no points in PC2 are close enough
+         # Option 1: Only use PC1 contribution (might be biased)
+         # return (1.0/n) * np.sum(PC1max) 
+         # Option 2: Return a large distance or infinity
+         return np.inf
+    
+    PC2maxAlt = PC2max * mask
+    # Using n_points and m (shape[0]) for normalization as per standard Chamfer
+    totalDist = 0.5 * (1.0 / n) * np.sum(PC1max) + 0.5 * (1.0 / m) * np.sum(PC2maxAlt[mask]) # Only sum masked points
+    # Or using mp for normalization as in your original code:
+    # totalDist = 0.5 * (1.0/n) * np.sum(PC1max) + 0.5 * (1.0/mp) * np.sum(PC2maxAlt) 
+    return totalDist
+def chamferProc(PC1, PC2, thresh = .3):
+    PC1 = procrustes(PC1, PC2)
+    nmm = PC1[:, np.newaxis, :] - PC2[np.newaxis, :, :]
+    dist =  np.sum(nmm*nmm, axis=-1)
+    PC1max = np.min(dist, axis=1)
+    PC2max = np.min(dist, axis=0)
+    return (1.0/(2*n))*np.sum(PC1max) + (1.0/(2*m))*(np.sum(PC2max))
+def chamfer(PC1, PC2, thresh=.3):
+    nmm = PC1[:, np.newaxis, :] - PC2[np.newaxis, :, :]
+    dist =  np.sum(nmm*nmm, axis=-1)
+    PC1max = np.min(dist, axis=1)
+    PC2max = np.min(dist, axis=0)
+    return (1.0/(2*n))*np.sum(PC1max) + (1.0/(2*m))*(np.sum(PC2max))
+# --- Wrapper Metric Function for Scikit-learn ---
+def emd_proc(u_scaled_flat, v_scaled_flat):
+
+    u_flat = u_scaled_flat.reshape(1, -1)
+    v_flat = v_scaled_flat.reshape(1, -1)
+
+    # Reshape back to (N, 3) - ensure n_points and n_dims are correct
+    # (Should be available from the feature prep section)
+    PC1 = u_flat.reshape(n_points, n_dims) 
+    PC2 = v_flat.reshape(n_points, n_dims) 
+    PC1 = procrustes(PC1, PC2)
+    pc1 = PC1.reshape(-1)
+    pc2 = PC2.reshape(-1)
+    return wasserstein_distance(pc1,pc2)
+def masked_chamfer_knn_metric(u_scaled_flat, v_scaled_flat):
+    # Inverse transform using the FITTED scaler_pts
+    # Need reshape(1,-1) because inverse_transform expects 2D array
+    # u_flat = scaler_pts.inverse_transform(u_scaled_flat.reshape(1, -1))
+    # v_flat = scaler_pts.inverse_transform(v_scaled_flat.reshape(1, -1))
+    
+    u_flat = u_scaled_flat.reshape(1, -1)
+    v_flat = v_scaled_flat.reshape(1, -1)
+
+    # Reshape back to (N, 3) - ensure n_points and n_dims are correct
+    # (Should be available from the feature prep section)
+    pc1 = u_flat.reshape(n_points, n_dims) 
+    pc2 = v_flat.reshape(n_points, n_dims) 
+    
+    # Calculate distance using the original function
+    distance = maskedChamfer(pc1, pc2, thresh=0.3) # Adjust thresh if needed
+    return distance
+
+# --- Model Training (KNN with Masked Chamfer Metric) ---
+k_value = 5 # Chamfer is expensive, maybe start with smaller k
+#knn = KNeighborsClassifier(n_neighbors=k_value, metric=emd_proc, n_jobs = -1) 
+knn = KNeighborsClassifier(n_neighbors=k_value, metric=masked_chamfer_knn_metric, n_jobs=-1) # Use n_jobs=-1 for parallelization
+
+print(f"\n--- Training KNN with k={k_value} using Masked Chamfer distance ---")
+m = 1000
+print(X_train_pts.shape)
+knn.fit(X_train_pts[0:m], y_train_pts[0:m]) # Train KNN (stores data)
+print("--- KNN Training Complete ---")
+
+# --- Prediction (KNN) ---
+print("--- Predicting on Test Set ---")
+n = 100
+y_pred_pts = knn.predict(X_test_pts[0:n])
+print("--- Prediction Complete ---")
+
+# --- Evaluation (KNN) ---
+accuracy_pts = accuracy_score(y_test_pts[0:n], y_pred_pts)
+conf_matrix_pts = confusion_matrix(y_test_pts[0:n], y_pred_pts)
+
+# --- Output Results (KNN) ---
+print("\n--- KNN Classifier (Masked Chamfer Distance) ---")
+print(f"Input: Original point clouds ({n_points} points, {n_dims} dims)")
+print(f"Using K = {k_value}")
+print(f"Using Metric = Masked Chamfer (thresh=0.3)")
+print(f"Training Set Size: {X_train_pts.shape[0]}")
+print(f"Test Set Size: {X_test_pts.shape[0]}")
+print(f"Test Set Accuracy: {accuracy_pts:.4f}")
+print("Confusion Matrix:")
+print(conf_matrix_pts)
+
+:::
+
+
 ## 3D Shape Completion
 
 For our second task, we start with the voxel representation of the partial 3D form and attempt to complete the rest of the form. To accomplish this, we utilize Variational Auto-Encoders (VAE). Variatonal autoencoders apply variational inference in order to approximate the distribution of the latent variables given the data (encoding) and the data given the latent variables (decoding), learning the data distribution in the process [@kingma2013auto]. We chose this approach since despite having $d^3$ voxels and features, the actual generation of each example in the dataset is governed by a small number of latent variables controlling the effect of scaling, rotation, translation, and noising is applied.
