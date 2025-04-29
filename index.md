@@ -370,6 +370,36 @@ $$
 d(A,B) = EMD(P, Q)
 $$
 
+Some important things we might want for a distance on point clouds are that the distance is invariant to both permutation of the input points in the point clouds, and that it is invariant to translation and rotation of the point clouds. The second is less obvious than the first: but depending on the task, we might want to use natural symmetries in the data to help with our understanding of "similar objects".
+
+A common distance metric for point clouds which is commonly used is the Chamfer distance, which computes the distance between two point clouds (of the same size) by taking the average distance between pairs of nearest neighbors, ie 
+$$ 
+d(A,B) = \frac{1}{2n} \sum_{i=1}^n |x_i - NN(x_i, B)| + \frac{1}{2n}\sum_{j=1}^n\vert x_j - NN(x_j, A)
+$$
+
+As you can see, this metric is permutation (but not rotation) invariant. However, a major limitation of this distance is that it only works for point clouds of the same "size" - which doesn't really match the real world. A way to get around this is to define a "masked chamfer" distance as follows: 
+
+$$ d(A,B) = \frac{1}{2n} \sum_{i=1}^n |x_i - NN(x_i, B)| + \frac{1}{2m}\sum_{j=1}^m \vert x_j - NN(x_j, A)\vert* m_i$$ 
+
+where $m_i$ is a mask value of 0 or 1 for each term on the sum, and $m_i = | x_i - NN(x_i, A)| < v$. Ie, we only count terms in the sum which are below some threshold of "distance" from the other point cloud. This allows us to ignore points which are very far away from the other cloud. This is a nice "approximate" way to match compute distance between "partial" point clouds which may not line up perfectly. 
+
+To get rotation and translation equivariance, the most straightforward approach is to just define the distance as: 
+$$ d(A,B) = \min_{g\in SE(3)} d(g\circ A, B)$$ 
+
+You can compute this distance with gradient descent - however, this is messy, and doesn't make sense with KNN where you have to CONTINUALLY compute distances. So we need something sloppier. 
+
+What we use is something called Procrustes Analysis. 
+
+We wish to optimize what follows: 
+$$d(A,B) = \min_{g\in SE(3)} \sum_{i=1}^n d(g\circ A_i, B_i)$$ 
+where we take the proper "g" to be the argmin of that thing there. 
+
+To get this, we can compute the cross covariance of the two point cloud matrices, and compute its SVD, then take $R = VU^T$ and $t = \mu_B - R \mu_A$ 
+
+This comes from the known solution to the least squares problem. 
+
+Note, however, that for this to make complete sense, this is implicitly assuming that the given permutations of points are "right" in some sense, that you should transform each point into the other corresponding one. This is obviously not the case in our problem. However, we still use it because for this specific problem (ie dataset), it happens to not backfire very hard, since most points are generally quite close together - we're looking at concentrated points in a small area, so we care more about the rotation being "mostly right" than exact. 
+
 Using this distance metric, we then apply K-Nearest Neighbor classification to the set of point clouds. (What values of k are we using)
 
 ## 3D Shape Completion
@@ -383,7 +413,20 @@ Completion: We train a VAE to complete the voxel representation of the full 3D s
 
 ### Reconstruction
 
-As a precursor to the completion task, we tackle the typical VAE problem, which involves training an encoder that learns the distribution of the latent variables given the full 3D form and a decoder that learns the distribution of the voxels in the full 3D form given the latent variables. (TALK ABOUT ARCHITECTURE, TRAINING, EPOCHS, etc)
+As a precursor to the completion task, we tackle the typical VAE problem, which involves training an encoder that learns the distribution of the latent variables given the full 3D form and a decoder that learns the distribution of the voxels in the full 3D form given the latent variables.
+
+For the architecture, we use a 3D VAE with a CNN Encoder and Decoder. 
+Inputs are 32x32x32 voxels, and the encoder has 3 convolutional blocks, with channel size 4, 8 and 16. Between blocks are relu and max pool layers. We then use 2 2 layer MLPs for the mu and log variance respectively, with Relu activations on the first layer and a hidden dimension of 100. 
+
+After sampling from the 128 dim latent space using those parameters, we use a 2 layer decoder MLP with the same specifications as the previous MLPs. Then, we use a convolutional decoder with the same structure as the encoder, but reversed (and with the inverse operations). Then, we end with a sigmoid activation. 
+
+In addition to those things for standard VAEs, we also include a temperature parameter, which affects the variation of the data by influencing the variance. 
+
+We use a Binary crossentropy loss + $\lambda*$KL divergence loss (standard for VAE). We use $\lambda = 10$
+
+
+HERE IS THE CODE FOR THE VAE. 
+
 
 ### Completion
 
