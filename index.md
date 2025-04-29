@@ -403,6 +403,7 @@ Using this distance metric, we then apply K-Nearest Neighbor classification to t
 
 :::{dropdown} KNN Code
 
+```{code} Python
 # --- Original Point Cloud Prep ---
 X_points = np.array([pc.flatten() for pc in inputPoints])
 y_labels = np.array(y)
@@ -415,12 +416,9 @@ X_train_pts, X_test_pts, y_train_pts, y_test_pts = train_test_split(
 
 n_dims = inputPoints[0].shape[1]   # Number of dimensions per point (e.g., 3 for x,y,z)
 
-# --- Feature Scaling (Points) ---
-# scaler_pts = StandardScaler() 
-# X_train_pts_scaled = scaler_pts.fit_transform(X_train_pts) 
-# X_test_pts_scaled = scaler_pts.transform(X_test_pts) 
+```
 
-
+```{code} Python
 def procrustes(PC1, PC2):
     mu1 = np.mean(PC1, axis=0)
     mu2 = np.mean(PC2, axis=0)
@@ -462,6 +460,10 @@ def maskedChamferProc(PC1, PC2, thresh = .3):
     # Or using mp for normalization as in your original code:
     # totalDist = 0.5 * (1.0/n) * np.sum(PC1max) + 0.5 * (1.0/mp) * np.sum(PC2maxAlt) 
     return totalDist
+
+```
+
+```{code} Python
 # --- Your Masked Chamfer Function ---
 def maskedChamfer(PC1, PC2, thresh = .3):
     # Consider handling potential division by zero if mp can be 0
@@ -505,6 +507,9 @@ def chamfer(PC1, PC2, thresh=.3):
     PC1max = np.min(dist, axis=1)
     PC2max = np.min(dist, axis=0)
     return (1.0/(2*n))*np.sum(PC1max) + (1.0/(2*m))*(np.sum(PC2max))
+```
+
+```{code} Python
 # --- Wrapper Metric Function for Scikit-learn ---
 def emd_proc(u_scaled_flat, v_scaled_flat):
 
@@ -536,6 +541,9 @@ def masked_chamfer_knn_metric(u_scaled_flat, v_scaled_flat):
     # Calculate distance using the original function
     distance = maskedChamfer(pc1, pc2, thresh=0.3) # Adjust thresh if needed
     return distance
+```
+
+```{code} Python
 
 # --- Model Training (KNN with Masked Chamfer Metric) ---
 k_value = 5 # Chamfer is expensive, maybe start with smaller k
@@ -568,7 +576,7 @@ print(f"Test Set Size: {X_test_pts.shape[0]}")
 print(f"Test Set Accuracy: {accuracy_pts:.4f}")
 print("Confusion Matrix:")
 print(conf_matrix_pts)
-
+```
 :::
 
 
