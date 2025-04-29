@@ -397,7 +397,7 @@ To derive this, the cross covariance of the two point cloud matrices and its SVD
 
 This comes from the known solution to the least squares problem. 
 
-Strictly speaking, the Procrustes objective function \( \min_{g\in SE(3)} \sum_{i=1}^n d(g\circ A_i, B_i) \) assumes a known, correct pairing between points \(A_i\) and \(B_i\). This condition is not met in our scenario involving comparisons between partial and complete point clouds. However, we utilize this alignment technique empirically. Given that our dataset consists of relatively compact point distributions, the alignment provided by Procrustes, while not based on true point correspondences, serves to orient the shapes effectively, resulting in substantial gains in KNN classification performance.
+Strictly speaking, the Procrustes objective function $\min_{g\in SE(3)} \sum_{i=1}^n d(g\circ A_i, B_i)$ assumes a known, correct pairing between points $A_i$ and $B_i$. This condition is not met in our scenario involving comparisons between partial and complete point clouds. However, we utilize this alignment technique empirically. Given that our dataset consists of relatively compact point distributions, the alignment provided by Procrustes, while not based on true point correspondences, serves to orient the shapes effectively, resulting in substantial gains in KNN classification performance.
 
 Using this distance metric, we then apply K-Nearest Neighbor classification to the set of point clouds. We let each KNN have the distance metric of either Earthmover's, Chamfer, or Masked Chamfer, and then either apply Procrustes or not. Each KNN is trained with 1000 samples of both parallelepiped and spheres with $k=5$.
 
@@ -411,9 +411,9 @@ For our second task, we start with the voxel representation of the partial 3D fo
 As a precursor to the completion task, we tackle the typical VAE problem, which involves training an encoder that learns the distribution of the latent variables given the full 3D form and a decoder that learns the distribution of the voxels in the full 3D form given the latent variables.
 
 For the architecture, we use a 3D VAE with a CNN Encoder and Decoder. 
-Inputs are 32x32x32 voxels, and the encoder has 3 convolutional blocks, with channel size 4, 8 and 16. Between blocks are relu and max pool layers. We then use 2 2 layer MLPs for the mu and log variance respectively, with Relu activations on the first layer and a hidden dimension of 100. 
+Inputs are 32x32x32 voxels, and the encoder has 3 convolutional blocks, with channel size 4, 8 and 16. Between blocks are relu and max pool layers. We then use two 2-layer MLPs for the mu and log variance respectively, with Relu activations on the first layer and a hidden dimension of 100. 
 
-After sampling from the 128 dim latent space using those parameters, we use a 2 layer decoder MLP with the same specifications as the previous MLPs. Then, we use a convolutional decoder with the same structure as the encoder, but reversed (and with the inverse operations). Then, we end with a sigmoid activation. 
+After sampling from the 128 dim latent space using those parameters, we use a 2-layer decoder MLP with the same specifications as the previous MLPs. Then, we use a convolutional decoder with the same structure as the encoder, but reversed (and with the inverse operations). Then, we end with a sigmoid activation. 
 
 In addition to those things for standard VAEs, we also include a temperature parameter, which affects the variation of the data by influencing the variance. 
 
