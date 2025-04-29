@@ -26,7 +26,7 @@ To generate a data point, we first pick either a cube or sphere to start with, t
 
 To generate the partial noisy point cloud, we first choose a random unit vector in $\mathbb{R}^3$ to serve as the "viewpoint" of the agent looking at the 3D form. We take the dot product of each point with the viewpoint vector and keep only the points that are associated with the top $k$ values of the dot products to get the points that are "observable" by the model. For each of the remaining $k$ points in the partial point cloud, we perturb each point using independent, zero-mean Gaussian noise. This gives us the final piece of our data set, which is the partial noisy point cloud that would be observed by an agent.
 
-To generate a data set, we repeat the process above until we get as many samples as desired. For our dataset, we generated 200 samples, 100 ellipsoids and 100 parallelipipeds. Each full 3D point cloud contained 10000 points, and each partial point cloud contained 1000 points. For perturbation, we used a multivariate Gaussian distribution with $\mu = 0$ and $\Sigma = 0.01 I_{3}$. 
+To generate a data set, we repeat the process above until we get as many samples as desired. Each full 3D point cloud contained 10000 points, and each partial point cloud contained 1000 points. For perturbation, we used a multivariate Gaussian distribution with $\mu = 0$ and $\Sigma = 0.01 I_{3}$. 
 
 :::{dropdown} Dataset Generation Code
 ```{code} python
@@ -235,14 +235,14 @@ The point cloud and voxel representations of the same 3D ellipsoid
 
 ## Classification of Partial Observations
 
-For this problem, we take the partial and noisy 3D forms and attempt to classify them as either being an ellipsoid or a parallelipiped. We take two approaches to this classification problem. First, we try a classical approach, logistic regression, applied to the voxel representation of the partial 3D form. Second, we try something with a more probabilistic flavor, treating a point cloud as an empirical distribution and applying K-Nearest Neighbors (KNN) classification using a distance measure for probability distributions such as Chamfer or Earthmover's distance. This task is particularly useful as it allows for the implementation of conditional generative models through classifier guidance. 
+For this problem, we take the partial and noisy 3D forms and attempt to classify them as either being an ellipsoid or a parallelipiped. We take two approaches to this classification problem. First we applied 3D convolutional neural networks to predict the shape from a partial voxelized representation. We also applied K-Nearest Neighbors (KNN), using a distance measure for probability distributions such as Chamfer or Earthmover's distance, to classify point clouds as an empirical distribution. This task is particularly useful as it allows for the implementation of generative models conditioned on the classifier's predictions. 
 
 
 ### Convolutional Neural Network
 
 #### Architecture
 
-We implemented a 3D Convolutional Neural Network (CNN) for binary classification ('cube' vs 'sphere') of voxelized partial point clouds. The network accepts input voxel grids of size $32 \times 32 \times 32$ (denoted as $D=32$). The architecture comprises three convolutional blocks followed by a fully connected classifier. Each convolutional block consists of a 3D convolutional layer (`Conv3d`) with kernel size $k=3$, stride $s=1$, and padding $p=1$, followed by a ReLU activation (`ReLU`) and a 3D max pooling layer (`MaxPool3d`) with kernel size $k=2$ and stride $s=2$. The number of output channels $C_{out}$ increases through the blocks: Block 1 has $C_{out}=16$, Block 2 has $C_{out}=32$, and Block 3 has $C_{out}=64$. This sequence transforms the input tensor shape from $(B, 1, D, D, D)$ to $(B, 16, D/2, D/2, D/2)$, then to $(B, 32, D/4, D/4, D/4)$, and finally to $(B, 64, D/8, D/8, D/8)$, where $B$ is the batch size. For $D=32$, the final feature map size is $(B, 64, 4, 4, 4)$. This output is flattened into a vector $x_{flat} \in \mathbb{R}^{4096}$ (since $64 \times 4^3 = 4096$). The classifier then processes this vector through a linear layer mapping $4096 \to 512$ features, followed by ReLU activation, a dropout layer with probability $p_{dropout}=0.5$ for regularization, and a final linear layer mapping $512 \to 2$ output classes. The `nn.CrossEntropyLoss` used incorporates the final log-softmax operation.
+We implemented a 3D Convolutional Neural Network (CNN) for binary classification ('parallelepiped' vs 'sphere') of voxelized partial point clouds. The network accepts input voxel grids of size $32 \times 32 \times 32$ (denoted as $D=32$). The architecture comprises three convolutional blocks followed by a fully connected classifier. Each convolutional block consists of a 3D convolutional layer (`Conv3d`) with kernel size $k=3$, stride $s=1$, and padding $p=1$, followed by a ReLU activation (`ReLU`) and a 3D max pooling layer (`MaxPool3d`) with kernel size $k=2$ and stride $s=2$. The number of output channels $C_{out}$ increases through the blocks: Block 1 has $C_{out}=16$, Block 2 has $C_{out}=32$, and Block 3 has $C_{out}=64$. This sequence transforms the input tensor shape from $(B, 1, D, D, D)$ to $(B, 16, D/2, D/2, D/2)$, then to $(B, 32, D/4, D/4, D/4)$, and finally to $(B, 64, D/8, D/8, D/8)$, where $B$ is the batch size. Each extra output channel is an extra learnable filter that can specialize in a new pattern. As you go deeper and the raw spatial resolution shrinks, the network compensates by adding filters so it can still capture enough information. For $D=32$, the final feature map size is $(B, 64, 4, 4, 4)$. This output is flattened into a vector $x_{flat} \in \mathbb{R}^{4096}$ (since $64 \times 4^3 = 4096$). The classifier then processes this vector through a linear layer mapping $4096 \to 512$ features, followed by ReLU activation, a dropout layer with probability $p_{dropout}=0.5$ for regularization, and a final linear layer mapping $512 \to 2$ output classes. The `nn.CrossEntropyLoss` used incorporates the final log-softmax operation.
 
 
 :::{dropdown} CNN Architecture and Training Code
@@ -355,220 +355,24 @@ for epoch in range(cnn_epochs):
 
 ### K-Nearest Neighbors
 
+We evaluated the K-Nearest Neighbors (KNN) classifier ($k=5$) using various distance metrics between the input partial point clouds and the training samples. We tested three primary distance metrics: Chamfer distance, Masked Chamfer distance (with a threshold of 0.3), and Earth Mover's Distance (EMD). Additionally, we assessed the impact of applying Procrustes analysis to align the point clouds before computing the distance. The classification accuracies on the test set for each configuration are summarized below:
 
-Some important things we might want for a distance on point clouds are that the distance is invariant to both permutation of the input points in the point clouds, and that it is invariant to translation and rotation of the point clouds. The second is less obvious than the first: but depending on the task, we might want to use natural symmetries in the data to help with our understanding of "similar objects".
+| Distance Metric         | Procrustes Alignment | Test Accuracy |
+| :---------------------- | :------------------- | :------------ |
+| Chamfer                 | No                   | 0.45          |
+| Masked Chamfer ($t=0.3$) | No                   | 0.45          |
+| EMD                     | No                   | 0.53          |
+| EMD                     | Yes                  | 0.74          |
+| Chamfer                 | Yes                  | 0.82          |
+| Masked Chamfer ($t=0.3$) | Yes                  | **0.87**      |
 
-A common distance metric for point clouds which is commonly used is the Chamfer distance, which computes the distance between two point clouds (of the same size) by taking the average distance between pairs of nearest neighbors, ie 
-$$ 
-d(A,B) = \frac{1}{2n} \sum_{i=1}^n |x_i - NN(x_i, B)| + \frac{1}{2n}\sum_{j=1}^n\vert x_j - NN(x_j, A)
-$$
+**Analysis:**
 
-As you can see, this metric is permutation (but not rotation) invariant. However, a major limitation of this distance is that it only works for point clouds of the same "size" - which doesn't really match the real world. A way to get around this is to define a "masked chamfer" distance as follows: 
+The results clearly demonstrate the critical importance of rotational and translational alignment for classifying partial point clouds. Without alignment (Procrustes = No), all distance metrics performed poorly, with accuracies barely above random guessing (0.50 for a binary classification task). EMD showed slightly better performance than Chamfer and Masked Chamfer in this baseline case.
 
-$$ d(A,B) = \frac{1}{2n} \sum_{i=1}^n |x_i - NN(x_i, B)| + \frac{1}{2m}\sum_{j=1}^m \vert x_j - NN(x_j, A)\vert* m_i$$ 
+Applying Procrustes analysis before calculating the distance significantly improved performance across all metrics. This highlights that the primary challenge in comparing these partial point clouds lies in their arbitrary orientations and positions. Aligning them first allows the distance metrics to capture shape similarity more effectively.
 
-where $m_i$ is a mask value of 0 or 1 for each term on the sum, and $m_i = | x_i - NN(x_i, A)| < v$. Ie, we only count terms in the sum which are below some threshold of "distance" from the other point cloud. This allows us to ignore points which are very far away from the other cloud. This is a nice "approximate" way to match compute distance between "partial" point clouds which may not line up perfectly. 
-
-Another common distance metric is Earth mover's or Wasserstein distance. Let $A$ and $B$ be two sets of points. Let $|A|$ denote the cardinality of the set and $A^{(i)}$ denote the $i$th point. We can define the probability measure $P_A$ associated with the point cloud $A$ as
-
-$$
-P_A(S) = \dfrac{1}{|A|} \sum_{i=1}^{|A|} \boldsymbol{1}_{A^{(i)} \in S}\\
-$$
-
-and $P_B$ for point cloud $B$ analagously. We then define the distance between point clouds $A$ and $B$ as the Earth mover's distance between probability measures $P_A$ and $P_B$
-
-$$
-d(A,B) = \inf_{\pi \in \Gamma(P_A, P_B)} \mathbb{E}_{(x,y) \sim \pi} \|x-y\|
-$$
-
-To get rotation and translation equivariance, the most straightforward approach is to just define the distance as: 
-$$ d(A,B) = \min_{g\in SE(3)} d(g\circ A, B)$$ 
-
-You can compute this distance with gradient descent - however, this has the drawback with KNNs where you have to continually compute distances.
-
-An alternative is Procrustes Analysis. 
-
-We wish to optimize what follows: 
-$$d(A,B) = \min_{g\in SE(3)} \sum_{i=1}^n d(g\circ A_i, B_i)$$ 
-
-where we take the proper "g" to be the argmin.
-
-To get this, we can compute the cross covariance of the two point cloud matrices, and compute its SVD, then take $R = VU^T$ and $t = \mu_B - R \mu_A$ 
-
-This comes from the known solution to the least squares problem. 
-
-Note, however, that for this to make complete sense, this is implicitly assuming that the given permutations of points are "right" in some sense, that you should transform each point into the other corresponding one. This is obviously not the case in our problem. However, we still use it because for this specific problem, since most points are generally quite close together - we're looking at concentrated points in a small area, so as long as the rotation is mostly correct, we see great improvements. 
-
-Using this distance metric, we then apply K-Nearest Neighbor classification to the set of point clouds. We let each KNN have the distance metric of either Earthmover's, Chamfer, or Masked Chamfer, and then either apply Procrustes or not. Each KNN is trained with 1000 samples with $k=5$.
-:::{dropdown} KNN methodology
-```{code} Python
-# --- Original Point Cloud Prep ---
-X_points = np.array([pc.flatten() for pc in inputPoints])
-y_labels = np.array(y)
-n_points = inputPoints[0].shape[0] # Number of points per sample
-
-# --- Data Splitting (Points) ---
-X_train_pts, X_test_pts, y_train_pts, y_test_pts = train_test_split(
-    X_points, y_labels, test_size=0.3, random_state=42, stratify=y_labels
-)
-
-n_dims = inputPoints[0].shape[1]   # Number of dimensions per point (e.g., 3 for x,y,z)
-
-# --- Feature Scaling (Points) ---
-# scaler_pts = StandardScaler() 
-# X_train_pts_scaled = scaler_pts.fit_transform(X_train_pts) 
-# X_test_pts_scaled = scaler_pts.transform(X_test_pts) 
-
-
-def procrustes(PC1, PC2):
-    mu1 = np.mean(PC1, axis=0)
-    mu2 = np.mean(PC2, axis=0)
-    nPC1 = PC1 - mu1
-    nPC2 = PC2 - mu2
-    crossCov = nPC1.T @nPC2
-    u, s, vh= np.linalg.svd(crossCov, full_matrices = True)
-    # is the determinant negative? 
-    R = vh.T @ u.T
-    t = mu2 - R@(mu1)
-    PC1New = PC1@ R.T + t
-    return PC1New
-def maskedChamferProc(PC1, PC2, thresh = .3):
-    # Consider handling potential division by zero if mp can be 0
-    n = PC1.shape[0]
-    m = PC2.shape[0]
-    numIter = 10
-    if m == 0 or n == 0: # Handle empty point clouds
-        return np.inf # Or some large number / appropriate value
-    PC1 = procrustes(PC1, PC2)
-    nmm = PC1[:, np.newaxis, :] - PC2[np.newaxis, :, :]
-    dist =  np.sum(nmm*nmm, axis=-1)
-    PC1max = np.min(dist, axis=1)
-    PC2max = np.min(dist, axis=0)
-    
-    mask = (PC2max < thresh**2)
-    mp = np.sum(mask)
-    
-    if mp == 0:
-         # Handle case where no points in PC2 are close enough
-         # Option 1: Only use PC1 contribution (might be biased)
-         # return (1.0/n) * np.sum(PC1max) 
-         # Option 2: Return a large distance or infinity
-         return np.inf
-    
-    PC2maxAlt = PC2max * mask
-    # Using n_points and m (shape[0]) for normalization as per standard Chamfer
-    totalDist = 0.5 * (1.0 / n) * np.sum(PC1max) + 0.5 * (1.0 / m) * np.sum(PC2maxAlt[mask]) # Only sum masked points
-    # Or using mp for normalization as in your original code:
-    # totalDist = 0.5 * (1.0/n) * np.sum(PC1max) + 0.5 * (1.0/mp) * np.sum(PC2maxAlt) 
-    return totalDist
-# --- Your Masked Chamfer Function ---
-def maskedChamfer(PC1, PC2, thresh = .3):
-    # Consider handling potential division by zero if mp can be 0
-    n = PC1.shape[0]
-    m = PC2.shape[0]
-   
-    if m == 0 or n == 0: # Handle empty point clouds
-        return np.inf # Or some large number / appropriate value
-
-    nmm = PC1[:, np.newaxis, :] - PC2[np.newaxis, :, :]
-    dist =  np.sum(nmm*nmm, axis=-1)
-    PC1max = np.min(dist, axis=1)
-    PC2max = np.min(dist, axis=0)
-    
-    mask = (PC2max < thresh**2)
-    mp = np.sum(mask)
-    
-    if mp == 0:
-         # Handle case where no points in PC2 are close enough
-         # Option 1: Only use PC1 contribution (might be biased)
-         # return (1.0/n) * np.sum(PC1max) 
-         # Option 2: Return a large distance or infinity
-         return np.inf
-    
-    PC2maxAlt = PC2max * mask
-    # Using n_points and m (shape[0]) for normalization as per standard Chamfer
-    totalDist = 0.5 * (1.0 / n) * np.sum(PC1max) + 0.5 * (1.0 / m) * np.sum(PC2maxAlt[mask]) # Only sum masked points
-    # Or using mp for normalization as in your original code:
-    # totalDist = 0.5 * (1.0/n) * np.sum(PC1max) + 0.5 * (1.0/mp) * np.sum(PC2maxAlt) 
-    return totalDist
-def chamferProc(PC1, PC2, thresh = .3):
-    PC1 = procrustes(PC1, PC2)
-    nmm = PC1[:, np.newaxis, :] - PC2[np.newaxis, :, :]
-    dist =  np.sum(nmm*nmm, axis=-1)
-    PC1max = np.min(dist, axis=1)
-    PC2max = np.min(dist, axis=0)
-    return (1.0/(2*n))*np.sum(PC1max) + (1.0/(2*m))*(np.sum(PC2max))
-def chamfer(PC1, PC2, thresh=.3):
-    nmm = PC1[:, np.newaxis, :] - PC2[np.newaxis, :, :]
-    dist =  np.sum(nmm*nmm, axis=-1)
-    PC1max = np.min(dist, axis=1)
-    PC2max = np.min(dist, axis=0)
-    return (1.0/(2*n))*np.sum(PC1max) + (1.0/(2*m))*(np.sum(PC2max))
-# --- Wrapper Metric Function for Scikit-learn ---
-def emd_proc(u_scaled_flat, v_scaled_flat):
-
-    u_flat = u_scaled_flat.reshape(1, -1)
-    v_flat = v_scaled_flat.reshape(1, -1)
-
-    # Reshape back to (N, 3) - ensure n_points and n_dims are correct
-    # (Should be available from the feature prep section)
-    PC1 = u_flat.reshape(n_points, n_dims) 
-    PC2 = v_flat.reshape(n_points, n_dims) 
-    PC1 = procrustes(PC1, PC2)
-    pc1 = PC1.reshape(-1)
-    pc2 = PC2.reshape(-1)
-    return wasserstein_distance(pc1,pc2)
-def masked_chamfer_knn_metric(u_scaled_flat, v_scaled_flat):
-    # Inverse transform using the FITTED scaler_pts
-    # Need reshape(1,-1) because inverse_transform expects 2D array
-    # u_flat = scaler_pts.inverse_transform(u_scaled_flat.reshape(1, -1))
-    # v_flat = scaler_pts.inverse_transform(v_scaled_flat.reshape(1, -1))
-    
-    u_flat = u_scaled_flat.reshape(1, -1)
-    v_flat = v_scaled_flat.reshape(1, -1)
-
-    # Reshape back to (N, 3) - ensure n_points and n_dims are correct
-    # (Should be available from the feature prep section)
-    pc1 = u_flat.reshape(n_points, n_dims) 
-    pc2 = v_flat.reshape(n_points, n_dims) 
-    
-    # Calculate distance using the original function
-    distance = maskedChamfer(pc1, pc2, thresh=0.3) # Adjust thresh if needed
-    return distance
-
-# --- Model Training (KNN with Masked Chamfer Metric) ---
-k_value = 5 # Chamfer is expensive, maybe start with smaller k
-#knn = KNeighborsClassifier(n_neighbors=k_value, metric=emd_proc, n_jobs = -1) 
-knn = KNeighborsClassifier(n_neighbors=k_value, metric=masked_chamfer_knn_metric, n_jobs=-1) # Use n_jobs=-1 for parallelization
-
-print(f"\n--- Training KNN with k={k_value} using Masked Chamfer distance ---")
-m = 1000
-print(X_train_pts.shape)
-knn.fit(X_train_pts[0:m], y_train_pts[0:m]) # Train KNN (stores data)
-print("--- KNN Training Complete ---")
-
-# --- Prediction (KNN) ---
-print("--- Predicting on Test Set ---")
-n = 100
-y_pred_pts = knn.predict(X_test_pts[0:n])
-print("--- Prediction Complete ---")
-
-# --- Evaluation (KNN) ---
-accuracy_pts = accuracy_score(y_test_pts[0:n], y_pred_pts)
-conf_matrix_pts = confusion_matrix(y_test_pts[0:n], y_pred_pts)
-
-# --- Output Results (KNN) ---
-print("\n--- KNN Classifier (Masked Chamfer Distance) ---")
-print(f"Input: Original point clouds ({n_points} points, {n_dims} dims)")
-print(f"Using K = {k_value}")
-print(f"Using Metric = Masked Chamfer (thresh=0.3)")
-print(f"Training Set Size: {X_train_pts.shape[0]}")
-print(f"Test Set Size: {X_test_pts.shape[0]}")
-print(f"Test Set Accuracy: {accuracy_pts:.4f}")
-print("Confusion Matrix:")
-print(conf_matrix_pts)
-```
-:::
+Among the aligned metrics, Masked Chamfer distance achieved the highest accuracy (87%), outperforming both standard Chamfer (82%) and EMD (74%). This suggests that ignoring points that are very far apart after alignment (the masking step) is beneficial for comparing partial observations, potentially filtering out noise or irrelevant parts of the point clouds. The standard Chamfer distance, which considers all points, still performs well, indicating its robustness after alignment. EMD, while significantly improved by alignment, lagged behind the Chamfer-based metrics in this experiment. The superior performance of the Procrustes-aligned Masked Chamfer KNN demonstrates its effectiveness for classifying these specific types of partial 3D shapes.
 
 ## 3D Shape Completion
 
@@ -825,21 +629,23 @@ The results show effective learning on the training set, with $L_{train} \to 0$ 
 
 ### K-Nearest Neighbors
 
-Masked Chamfer distance: .45
+We evaluated the K-Nearest Neighbors (KNN) classifier ($k=5$) using various distance metrics between the input partial point clouds and the training samples. We tested three primary distance metrics: Chamfer distance, Masked Chamfer distance (with a threshold of 0.3), and Earth Mover's Distance (EMD). Additionally, we assessed the impact of applying Procrustes analysis to align the point clouds before computing the distance. The classification accuracies on the test set for each configuration are summarized below:
 
-Chamfer: .45
+| Distance Metric         | Procrustes Alignment | Test Accuracy |
+| :---------------------- | :------------------- | :------------ |
+| Chamfer                 | No                   | 0.45          |
+| Masked Chamfer ($t=0.3$) | No                   | 0.45          |
+| EMD                     | No                   | 0.53          |
+| EMD                     | Yes                  | 0.74          |
+| Chamfer                 | Yes                  | 0.82          |
+| Masked Chamfer ($t=0.3$) | Yes                  | **0.87**      |
 
-EMD: .53
 
-EMD + Procrustes: .74
+The results demonstrate the critical importance of rotational and translational alignment for classifying partial point clouds. Without alignment (Procrustes = No), all distance metrics performed poorly, with accuracies barely above random guessing (0.50 for a binary classification task). EMD showed slightly better performance than Chamfer and Masked Chamfer in this baseline case.
 
-Chamfer + Procrustes: .82
+Applying Procrustes analysis before calculating the distance significantly improved performance across all metrics. This highlights that the primary challenge in comparing these partial point clouds lies in their arbitrary orientations and positions. Aligning them first allows the distance metrics to capture shape similarity more effectively.
 
-Masked Chamfer + Procrustes: .87
-
-  
-
-As you can see, the approximate rotational alignment really helps things get more accurate.
+Among the aligned metrics, Masked Chamfer distance achieved the highest accuracy (87%), outperforming both standard Chamfer (82%) and EMD (74%). This suggests that ignoring points that are very far apart after alignment (the masking step) is beneficial for comparing partial observations, potentially filtering out noise or irrelevant parts of the point clouds. The standard Chamfer distance, which considers all points, still performs well, indicating its robustness after alignment. EMD, while significantly improved by alignment, lagged behind the Chamfer-based metrics in this experiment. The superior performance of the Procrustes-aligned Masked Chamfer KNN demonstrates its effectiveness for classifying these specific types of partial 3D shapes.
 
 ## 3D Shape Completion
 
@@ -861,9 +667,11 @@ Qualitative comparison between a couple examples of the full 3D representation a
 
 ```
 
-  Here, you can see that the reconstructions are almost identical to the original voxel, with some minute differences in the "shape" and extent of the reconstruction. Particularly, the clouds are more "rounded" than the original, possibly caused by the proliferation of elliptical shapes in the training data, and potential unimodality of generations. Regardless, it still reconstructs most of the shape. 
+The training and validation loss curves for the VAE reconstruction task (Figure {figure}`reconLossC`) demonstrate successful convergence. Both losses decrease rapidly initially and then plateau, indicating that the model learned to effectively reconstruct the target voxel shapes from the input latent representation. The small, stable gap between the training and validation loss suggests minimal overfitting.
 
-It's important to note that in our visualizations, we set a threshold and only display voxels with values ABOVE that threshold. Thus, different threshold values reflect a different level of confidence. In these graphics, we use a value of .3. 
+Qualitatively, the reconstructions shown in Figures {figure}`reconImages` and {figure}`reconImages2` are visually very similar to the original ground truth voxels. The VAE effectively captures the overall shape and extent of the objects. Minor differences are observable, particularly a tendency for the reconstructed shapes to appear slightly more "rounded" or smoother than the originals. This could potentially stem from the continuous nature of the latent space, the prevalence of spherical/ellipsoidal shapes in the training data influencing the learned prior, or the inherent smoothing effect of the convolutional decoder. Despite these subtle variations, the high fidelity of the reconstructions confirms the VAE's capability in learning a compressed representation and accurately decoding it back to the voxel space.
+
+It is important to note that these visualizations employ a threshold (0.3); only voxels with a predicted occupancy probability above this value are displayed. Varying this threshold would alter the visual appearance by reflecting different confidence levels in the reconstruction.
 
 
 
@@ -886,9 +694,12 @@ Loss over epochs for training the VAE to do reconstruction
 Qualitative comparison between a couple examples of the partial, noisy 3D form, full 3D representation, and the VAE completion
 
 ```
-You can see here that the generations do quite a decent job at reconstructing the full voxel given the partial input. They use that sense of "length" from the partial cloud and the generated shapes have that same structure. The generated shapes aren't quite as long or as wide as the true voxel, but that reflects some ambiguity in what the shape could possibly HAVE been. Furthermore, you can tell that the generated shapes are noticably different, showing that the generation is giving sufficient randomness. 
 
-In general, this had trouble reconstructing the parallelograms, as a lot of the reconstructions looked "rounded". This however, may reflect a characteristic of our visualization method and the continuity of the NN, rather than a characteristic of the learned data. Furthermore, it's likely that is related to the unimodality of the architecture. 
+The VAE was subsequently trained on the completion task, using partial voxel grids as input and the corresponding complete voxel grids as the target output. The loss curves (Figure {figure}`lossCurveC`) show that the training loss steadily decreases, while the validation loss decreases initially but begins to diverge upwards after approximately 75 epochs. This indicates that the model starts to overfit to the training data beyond this point, although it still learns the general task of completion.
+
+Qualitative results are presented in Figure {figure}`vaeImages`. The generated completions successfully infer the overall shape and orientation from the partial, noisy input. For instance, the elongated nature of the partial input is reflected in the completed ellipsoidal form. The model produces plausible completions that respect the input conditioning. However, similar to the reconstruction task, the completed shapes tend to be smoother and more rounded compared to the ground truth, particularly noticeable when the target is a parallelepiped (though the example shows an ellipsoid). This might reflect ambiguity inherent in completing shapes from partial data, properties of the VAE's latent space, or the smoothing effect of the decoder. The difference between the two generated samples ('Generated 1' and 'Generated 2') for the same input highlights the stochastic nature of the VAE, sampling different plausible completions from the learned latent distribution.
+
+<!-- As with reconstruction, the visualizations use a threshold of 0.3 for displaying occupied voxels. -->
 
 # Conclusion
 
