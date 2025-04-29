@@ -426,6 +426,216 @@ We use a Binary crossentropy loss + $\lambda*$KL divergence loss (standard for V
 
 
 HERE IS THE CODE FOR THE VAE. 
+:::{dropdown} VAE CODE
+```{code} Python
+class VoxelVAE(nn.Module):
+    def __init__(self, latent_dim=128, input_dim=(1, 32, 32, 32)):
+        super(VoxelVAE, self).__init__()
+        self.latent_dim = latent_dim
+       
+        k = 3
+        pad = math.floor((k - 1)/2)
+        #padding = "same"
+        padding = pad
+        self.d = 4
+        d = self.d
+
+        #maybe change to maxpool instead of stride. 
+        self.encoder = nn.Sequential(
+            nn.Conv3d(1, d, kernel_size=k, stride=1, padding=padding),
+            nn.ReLU(),
+            nn.MaxPool3d(kernel_size = k,stride = 2, padding = padding),
+            nn.Conv3d(d, 2*d, kernel_size=k, stride=1, padding=padding),
+            nn.ReLU(), 
+            nn.MaxPool3d(kernel_size = k,stride = 2, padding = padding),
+            nn.Conv3d(2*d, 4*d, kernel_size=k, stride=1, padding=padding),
+            nn.ReLU(),
+            nn.MaxPool3d(kernel_size = k,stride = 2, padding = padding),
+            #nn.Conv3d(4*d, 8*d, kernel_size=k, stride=1, padding=padding),
+            #nn.ReLU(),
+            #nn.MaxPool3d(kernel_size = k,stride = 2, padding = padding),
+            #nn.Conv3d(8*d, 8*d, kernel_size = k, stride = 1, padding = padding)
+        )
+        # TODO: THIS NEEDS TO BE A FUNCTION OF THE INPUT_DIMs?
+        self.fc_input_size = 4*d*4*4*4
+        hidden_dim = 100
+        self.fc_mu = nn.Sequential(
+            nn.Linear(self.fc_input_size, hidden_dim), nn.ReLU(),
+            #nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, latent_dim)
+        )
+        #self.fc_mu = nn.Linear(self.fc_input_size, latent_dim)
+        self.fc_logvar = nn.Sequential( 
+            nn.Linear(self.fc_input_size, hidden_dim), nn.ReLU(),
+            #nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, latent_dim))
+        #self.fc_logvar = nn.Linear(self.fc_input_size, latent_dim)
+
+        # Decoder
+        #what on earth does this do. 
+        self.fc_decode = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim), nn.ReLU(), 
+            #nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim,self.fc_input_size))
+        
+        self.decoder = nn.Sequential(
+            #nn.ConvTranspose3d(8*d,8*d, kernel_size=k, stride=1, padding=padding), 
+            #nn.Upsample(scale_factor = 2),
+            #nn.ConvTranspose3d(8*d, 4*d, kernel_size=k, stride=1, padding=padding),
+            #nn.ReLU(), 
+            nn.Upsample(scale_factor = 2),
+            nn.ConvTranspose3d(4*d, 2*d, kernel_size=k, stride=1, padding=padding),
+            nn.ReLU(),
+            nn.Upsample(scale_factor = 2),
+            nn.ConvTranspose3d(2*d, d, kernel_size=k, stride=1, padding=padding),
+            nn.ReLU(), 
+            nn.Upsample(scale_factor = 2),
+            nn.ConvTranspose3d(d, 1, kernel_size=k, stride=1, padding=padding),
+            nn.Sigmoid()
+        )
+
+    def reparametrize(self, mu, logvar, T = 1.0):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * (std*T)
+
+    def forward(self, x, T = 1.0):
+        batch_size = x.size(0)
+        
+        # Encode
+        x = self.encoder(x)
+        
+        x = x.view(batch_size, -1)  # Flatten
+        #32 x 256
+        
+        mu = self.fc_mu(x)
+        logvar = self.fc_logvar(x)
+
+        # Reparameterization trick
+        z = self.reparametrize(mu, logvar, T)
+
+        # Decode
+        x = self.fc_decode(z)
+        x = x.view(batch_size, 4*self.d,4,4,4)  # Reshape for transposed convs
+       
+        x = self.decoder(x)
+
+        return x, mu, logvar
+
+    def loss_function(self, recon_x, x, mu, logvar):
+   
+        recon_loss = F.binary_cross_entropy(recon_x, x, reduction='sum')
+        #print(x.shape)
+        #recon_loss = torch.mean(torch.sum((x - recon_x)**2, dim = (1, 2, 3,4))/(torch.sum(x**2, dim = (1,2,3,4))+1e-8))
+        #nn.functional.mse_loss(recon_x, x, reduction = "mean")
+        #check this. 
+        #print((1+ logvar- mu.pow(2) - logvar.exp()).shape)
+        #why does this work here. 
+        kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+       
+        # why this loss, maybe needs
+        #print("recon: ", recon_loss)
+        #print("Kl div: ", kl_div)
+        return recon_loss + 10*kl_div,recon_loss, kl_div
+    def relative_mse_loss(self, x, x_recon, eps=1e-8):
+      
+        # print(x_recon)
+        #print(x.shape)
+        #problem with these dimensions. 
+        #print(torch.sum(x ** 2, dim=-1))
+        #print(torch.sum(x ** 2, dim=-1).shape)
+
+        return torch.mean(torch.sum((x - x_recon) ** 2, dim=-1) / (torch.sum(x ** 2, dim=-1) + eps))
+def train_vae(model, dataloader, valdataloader, optimizer, epochs=100, device='cpu'):
+    model.to(device)
+    model.train()
+    print("cudnn benchmark is enabled:", torch.backends.cudnn.benchmark)
+    torch.backends.cudnn.benchmark = True
+
+    train_losses = [] # Store training loss per epoch
+    val_losses = []   # Store validation loss per epoch
+    train_kls = []    # Store training KL divergence per epoch
+    val_kls = []      # Store validation KL divergence per epoch
+
+    for epoch in range(epochs):
+        total_loss = 0
+        batchCount = 0
+        klLoss = 0
+        for (x,y) in dataloader:
+            batchCount+=1
+
+            x = x.to(device)
+            y = y.to(device)
+
+            optimizer.zero_grad()
+            recon_x, mu, logvar = model(x)
+            loss, recon, kl = model.loss_function(recon_x, y, mu, logvar)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+            klLoss += kl.item() # Use .item() to get scalar value
+
+        # Calculate average loss for the epoch
+        epoch_train_loss = total_loss / len(dataloader.dataset)
+        epoch_train_kl = klLoss / len(dataloader.dataset)
+        train_losses.append(epoch_train_loss)
+        train_kls.append(epoch_train_kl)
+
+        # Validation loop
+        model.eval()
+        val_loss = 0.0
+        valklLoss = 0.0
+        with torch.no_grad():
+            for (x,y) in valdataloader:
+
+                x = x.to(device)
+                y = y.to(device)
+
+                recon_x, mu, logvar = model(x)
+                valLoss, valRecon, valKL = model.loss_function(recon_x, y, mu, logvar)
+                valklLoss += valKL.item() # Use .item()
+                val_loss += valLoss.item() # Use .item()
+
+        # Calculate average validation loss for the epoch
+        epoch_val_loss = val_loss / len(valdataloader.dataset)
+        epoch_val_kl = valklLoss / len(valdataloader.dataset)
+        val_losses.append(epoch_val_loss)
+        val_kls.append(epoch_val_kl)
+
+        print(f"Epoch {epoch+1}, Train: {epoch_train_loss:.4f} Val: {epoch_val_loss:.4f}")
+        print(f"Train KL loss: {epoch_train_kl:.4f} Val: {epoch_val_kl:.4f}")
+        model.train()
+
+    return train_losses, val_losses, train_kls, val_kls # Return the history lists
+
+# No completion, just learn spheres and cubes
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = VoxelVAE(input_dim=(1, d, d, d))
+#model.to(device)
+#randomize beforehand please to vary which data is in train test and val. 
+#shuffle before splitting
+rng = np.random.default_rng()
+#changes inplace
+combinedData = np.stack([inputVoxels, trueVoxels], axis=-1)
+rng.shuffle(combinedData, axis=0)
+trainInput, other = np.split(combinedData, [int(0.8 * inputVoxels.shape[0])])
+
+trainx = trainInput[:, :, :, :, 0]
+#trainx = trainInput[:, :, :, :,  1]
+trainy = trainInput[:, :, :, :,  1]
+
+valInput, testInput = np.split(other, [other.shape[0]//2])
+valx = valInput[:, :, :, :, 0]
+#valx = valInput[:, :, :, :, 1]
+valy = valInput[:, :, :, :, 1]
+
+
+
+dataloader = DataLoader(TensorDataset(torch.tensor(trainx).float().unsqueeze(1), torch.tensor(trainy).float().unsqueeze(1)), batch_size=100, shuffle=True, pin_memory = True, num_workers= 8) # unsqueeze is needed to make dimensions correct, but why do we have the (1,d,d,d) instead of (d,d,d)
+valdataloader = DataLoader(TensorDataset(torch.tensor(valx).float().unsqueeze(1), torch.tensor(valy).float().unsqueeze(1)), batch_size = 100, shuffle = True)
+optimizer = optim.Adam(model.parameters(), lr=1e-3)
+```
+:::
 
 
 ### Completion
