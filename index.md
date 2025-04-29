@@ -235,11 +235,8 @@ The point cloud and voxel representations of the same 3D ellipsoid
 
 ## Classification of Partial Observations
 
-For this problem, we take the partial and noisy 3D forms and attempt to classify them as either being an ellipsoid or a parallelipiped. We take two approaches to this classification problem. First, we try a classical approach, logistic regression, applied to the voxel representation of the partial 3D form. Second, we try something with a more probabilistic flavor, treating a point cloud as an empirical distribution and applying K-Nearest Neighbors (KNN) classification using a distance measure for probability distributions such as Chamfer or Earthmover's distance. This task is particularly useful as it allows for the implementation of conditional generative models through (THE NAME OF THE TECHNIQUE THIS IS CALLED). 
+For this problem, we take the partial and noisy 3D forms and attempt to classify them as either being an ellipsoid or a parallelipiped. We take two approaches to this classification problem. First, we try a classical approach, logistic regression, applied to the voxel representation of the partial 3D form. Second, we try something with a more probabilistic flavor, treating a point cloud as an empirical distribution and applying K-Nearest Neighbors (KNN) classification using a distance measure for probability distributions such as Chamfer or Earthmover's distance. This task is particularly useful as it allows for the implementation of conditional generative models through classifier guidance. 
 
-```{figure} images/classification_example.png
-We are trying to learn a function $f$ to distinguish between data points generated initially from a sphere and those generated initially from a cube. 
-```
 
 ### Convolutional Neural Network
 
@@ -358,17 +355,6 @@ for epoch in range(cnn_epochs):
 
 ### K-Nearest Neighbors
 
-Let $A$ and $B$ be two sets of points. Let $|A|$ denote the cardinality of the set and $A^{(i)}$ denote the $i$th point. We can define the probability measure $P_A$ associated with the point cloud $A$ as
-
-$$
-P_A(S) = \dfrac{1}{|A|} \sum_{i=1}^{|A|} \boldsymbol{1}_{A^{(i)} \in S}\\
-$$
-
-and $P_B$ for point cloud $B$ analagously. We then define the distance between point clouds $A$ and $B$ as the distance between probability measures $P_A$ and $P_B$. (CHANGE FORMULA BASED ON ACTUAL IMPLEMENTATION)
-
-$$
-d(A,B) = EMD(P, Q)
-$$
 
 Some important things we might want for a distance on point clouds are that the distance is invariant to both permutation of the input points in the point clouds, and that it is invariant to translation and rotation of the point clouds. The second is less obvious than the first: but depending on the task, we might want to use natural symmetries in the data to help with our understanding of "similar objects".
 
@@ -383,33 +369,42 @@ $$ d(A,B) = \frac{1}{2n} \sum_{i=1}^n |x_i - NN(x_i, B)| + \frac{1}{2m}\sum_{j=1
 
 where $m_i$ is a mask value of 0 or 1 for each term on the sum, and $m_i = | x_i - NN(x_i, A)| < v$. Ie, we only count terms in the sum which are below some threshold of "distance" from the other point cloud. This allows us to ignore points which are very far away from the other cloud. This is a nice "approximate" way to match compute distance between "partial" point clouds which may not line up perfectly. 
 
+Another common distance metric is Earth mover's or Wasserstein distance. Let $A$ and $B$ be two sets of points. Let $|A|$ denote the cardinality of the set and $A^{(i)}$ denote the $i$th point. We can define the probability measure $P_A$ associated with the point cloud $A$ as
+
+$$
+P_A(S) = \dfrac{1}{|A|} \sum_{i=1}^{|A|} \boldsymbol{1}_{A^{(i)} \in S}\\
+$$
+
+and $P_B$ for point cloud $B$ analagously. We then define the distance between point clouds $A$ and $B$ as the Earth mover's distance between probability measures $P_A$ and $P_B$
+
+$$
+d(A,B) = \inf_{\pi \in \Gamma(P_A, P_B)} \mathbb{E}_{(x,y) \sim \pi} \|x-y\|
+$$
+
 To get rotation and translation equivariance, the most straightforward approach is to just define the distance as: 
 $$ d(A,B) = \min_{g\in SE(3)} d(g\circ A, B)$$ 
 
-You can compute this distance with gradient descent - however, this is messy, and doesn't make sense with KNN where you have to CONTINUALLY compute distances. So we need something sloppier. 
+You can compute this distance with gradient descent - however, this has the drawback with KNNs where you have to continually compute distances.
 
-What we use is something called Procrustes Analysis. 
+An alternative is Procrustes Analysis. 
 
 We wish to optimize what follows: 
 $$d(A,B) = \min_{g\in SE(3)} \sum_{i=1}^n d(g\circ A_i, B_i)$$ 
-where we take the proper "g" to be the argmin of that thing there. 
+
+where we take the proper "g" to be the argmin.
 
 To get this, we can compute the cross covariance of the two point cloud matrices, and compute its SVD, then take $R = VU^T$ and $t = \mu_B - R \mu_A$ 
 
 This comes from the known solution to the least squares problem. 
 
-Note, however, that for this to make complete sense, this is implicitly assuming that the given permutations of points are "right" in some sense, that you should transform each point into the other corresponding one. This is obviously not the case in our problem. However, we still use it because for this specific problem (ie dataset), it happens to not backfire very hard, since most points are generally quite close together - we're looking at concentrated points in a small area, so we care more about the rotation being "mostly right" than exact. 
+Note, however, that for this to make complete sense, this is implicitly assuming that the given permutations of points are "right" in some sense, that you should transform each point into the other corresponding one. This is obviously not the case in our problem. However, we still use it because for this specific problem, since most points are generally quite close together - we're looking at concentrated points in a small area, so as long as the rotation is mostly correct, we see great improvements. 
 
-Using this distance metric, we then apply K-Nearest Neighbor classification to the set of point clouds. (What values of k are we using)
+Using this distance metric, we then apply K-Nearest Neighbor classification to the set of point clouds. We let each KNN have the distance metric of either Earthmover's, Chamfer, or Masked Chamfer, and then either apply Procrustes or not. Each KNN is trained with 1000 samples with $k=5$.
 
 ## 3D Shape Completion
 
 For our second task, we start with the voxel representation of the partial 3D form and attempt to complete the rest of the form. To accomplish this, we utilize Variational Auto-Encoders (VAE). Variatonal autoencoders apply variational inference in order to approximate the distribution of the latent variables given the data (encoding) and the data given the latent variables (decoding), learning the data distribution in the process [@kingma2013auto]. We chose this approach since despite having $d^3$ voxels and features, the actual generation of each example in the dataset is governed by a small number of latent variables controlling the effect of scaling, rotation, translation, and noising is applied.
 
-```{figure} images/3D_shape_completion.png
-Reconstruction: We train a VAE to first reconstruct voxel representations of the full 3D form from the original 3D form
-Completion: We train a VAE to complete the voxel representation of the full 3D shape from the noisy, partial version
-```
 
 ### Reconstruction
 
@@ -425,8 +420,7 @@ In addition to those things for standard VAEs, we also include a temperature par
 We use a Binary crossentropy loss + $\lambda*$KL divergence loss (standard for VAE). We use $\lambda = 10$
 
 
-HERE IS THE CODE FOR THE VAE. 
-:::{dropdown} VAE CODE
+:::{dropdown} VAE Code
 ```{code} Python
 class VoxelVAE(nn.Module):
     def __init__(self, latent_dim=128, input_dim=(1, 32, 32, 32)):
@@ -640,7 +634,7 @@ optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
 ### Completion
 
-After learning the distribution of the 3D forms, we then modify our training dataset to take an incomplete 3D forms as input and output the full 3D form. Thus, the encoder learns the distribution of latent variables conditioned on the partial voxel image and the decoder learns the distribution of voxels in the full voxel image. (TALK ABOUT ANY ADDITIONAL CHANGES THAT WERE MADE COMPARED TO RECONSTRUCTION)
+After learning the distribution of the 3D forms, we then modify our training dataset to take an incomplete 3D forms as input and output the full 3D form. Thus, the encoder learns the distribution of latent variables conditioned on the partial voxel image and the decoder learns the distribution of voxels in the full voxel image. The architecture remains the same, but the input to the VAE is changed. 
 
 # Results
 ## Classification
@@ -661,51 +655,25 @@ The results show effective learning on the training set, with $L_{train} \to 0$ 
 
 ### K-Nearest Neighbors
 
-
-```{figure} images/KNN_train_confusion_plot.png
-Confusion plot for the KNN model on the training dataset
-```
-Report accuracy, precision, recall, any other metrics we want
-
-```{figure} images/KNN_test_confusion_plot.png
-Confusion plot for the KNN model on the test dataset
-```
-Report accuracy, precision, recall, any other metrics we want
-
 ## 3D Shape Completion
 
 ### Reconstruction
 
-```{figure} images/reconstruction_train_loss_graph.png
-Loss over epochs for training the VAE to do reconstruction
-```
-Report final train and test loss
-
-```{figure} images/reconstruction_example.png
-Qualitative comparison between a couple examples of the full 3D representation and the VAE reconstruction
-```
 
 ### Completion
 
 
-```{figure} images/reconstruction_train_loss_graph.png
-Loss over epochs for training the VAE to do reconstruction
-```
-Report final train and test loss
+# Conclusion
 
-```{figure} images/reconstruction_example.png
-Qualitative comparison between a couple examples of the partial, noisy 3D form, full 3D representation, and the VAE completion
-```
+In this paper, we demonstrate methods to effectively deal with noisy and incomplete 3D representations, in both classification and completion tasks. We achieve reasonable performance in classification, with best methods reaching nearly 80% accuracy. In the reconstruction and completion tasks, we demonstrate the viability of using VAEs in this completion tasks, with reasonable qualitative completions of point clouds. While our analysis is limited to only ellipsoids and parallelipipeds, we demonstrate a proof of concept for further classification and completion of additional more complex forms.
 
-# Discussion
-
-Classification sucks and VAEs work kinda. 
 
 ## Future Work
 
-- Combine generative modeling and classification to do conditional generative modelling
-- Add more complex forms in the dataset
-- Compare how the percentage of points seen affects the performance (is there a phase transition where the tasks is exceedingly easy above a certain threshold percentage but very difficult below)
-- Utilize more sophisticated classification algorithms (ex: feature select from a CNN before classifying)
-- Try out different diffusion models and try to work specifically with point clouds (since the number of voxels grows at a very fast rate when increasing precision)
-    - Discuss methods we investigated (autoregressive (transformers?), diffusion) but were not able to implement given time constraints.
+There are many directions that would make sense as a follow up to this project. The most obvious approach is to add more complex forms. While our approach works for ellipsoids and parallelipeds, it is unclear how well it will generate to forms that are more complicated. Thus, a good place to start is the ShapeNet [@shapenet] dataset which includes 3D representations of many everyday objects such as laptops, benches, chairs, etc. This will allow us to get a better evaluation of our methods on more realistic data. 
+
+Next, we can try more sophisticated generative models for the completion of point clouds. In particular, diffusion models have been the standard for image generation tasks [@diffusionimagesurvey]. Given the similarity of generation of 2D pixel images and 3D voxel shapes, this is a reasonable alternative approach to VAEs. Additionally, other architectures such as autoregressive generative models, like Point Transformers [@pointtransformer], can work directly with point clouds, circumventing the loss of information and large computational costs of sparse surfaces that result from working with voxels. 
+
+Finally, while the classification and generative modeling tasks seem fairly separate, they can be combined with certain architectures, such as diffusion, in order to make conditional generative models through classifier guidance [@song2020score]. 
+
+
