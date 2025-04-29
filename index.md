@@ -870,8 +870,7 @@ Loss over epochs for training the VAE to do reconstruction
 ```{figure} images/reconImages.png
 ```
 
-```
-{figure} images/reconImages2.png
+```{figure} images/reconImages2.png
 
 Qualitative comparison between a couple examples of the full 3D representation and the VAE reconstruction
 
